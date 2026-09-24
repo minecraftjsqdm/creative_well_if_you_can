@@ -1,0 +1,21 @@
+{
+  "creativewell.name": "能开创造就好好开",
+  "creativewell.screen.title": "能开创造就好好开",
+  "creativewell.search.hint": "搜索...",
+  "creativewell.relic.open": "饰品栏",
+  "creativewell.settings.title": "设置",
+  "creativewell.settings.columns.label": "列数",
+  "creativewell.settings.columns.value": "列数：%s",
+  "creativewell.settings.columns.unlimited": "无限！",
+  "creativewell.settings.columns.ignoreJei": "把 JEI 占完了也没事！",
+  "creativewell.settings.shift.label": "Shift+左键",
+  "creativewell.settings.shift.grab": "取满一组到光标",
+  "creativewell.settings.shift.stock": "放 64 个进背包",
+  "creativewell.settings.search.label": "搜索词",
+  "creativewell.settings.search.perTab": "各选项卡独立",
+  "creativewell.settings.search.global": "全局共享",
+  "creativewell.settings.jei.label": "JEI 搜索联动",
+  "creativewell.settings.jei.off": "关闭",
+  "creativewell.settings.jei.oneWay": "单向",
+  "creativewell.settings.jei.twoWay": "双向"
+}

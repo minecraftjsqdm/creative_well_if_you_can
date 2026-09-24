@@ -1,0 +1,21 @@
+{
+  "creativewell.name": "Creative well if you can",
+  "creativewell.screen.title": "Creative Well",
+  "creativewell.search.hint": "Search...",
+  "creativewell.relic.open": "Relics",
+  "creativewell.settings.title": "Settings",
+  "creativewell.settings.columns.label": "Columns",
+  "creativewell.settings.columns.value": "Columns: %s",
+  "creativewell.settings.columns.unlimited": "Unlimited!",
+  "creativewell.settings.columns.ignoreJei": "Cram JEI too!",
+  "creativewell.settings.shift.label": "Shift+click",
+  "creativewell.settings.shift.grab": "Full stack to cursor",
+  "creativewell.settings.shift.stock": "64 into backpack",
+  "creativewell.settings.search.label": "Search text",
+  "creativewell.settings.search.perTab": "Per tab",
+  "creativewell.settings.search.global": "Shared",
+  "creativewell.settings.jei.label": "JEI search link",
+  "creativewell.settings.jei.off": "Off",
+  "creativewell.settings.jei.oneWay": "JEI -> here",
+  "creativewell.settings.jei.twoWay": "Both ways"
+}
