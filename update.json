@@ -1,0 +1,10 @@
+{
+  "homepage": "https://github.com/minecraftjsqdm/creative_well_if_you_can",
+  "promos": {
+    "1.21.1-latest": "0.1.0",
+    "1.21.1-recommended": "0.1.0"
+  },
+  "1.21.1": {
+    "0.1.0": "Initial release. Rewrites the creative-mode inventory screen: dynamic grid sizing, a scrollable tab list on the left, and an always-available search bar."
+  }
+}
