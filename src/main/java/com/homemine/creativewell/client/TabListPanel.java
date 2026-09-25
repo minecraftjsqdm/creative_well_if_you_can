@@ -3,9 +3,11 @@ package com.homemine.creativewell.client;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Nullable;
+import net.minecraft.Util;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
@@ -24,12 +26,25 @@ import net.neoforged.neoforge.common.CreativeModeTabRegistry;
  */
 public final class TabListPanel {
     private static final int BUTTON_LEFT_INSET = 2;
-    private static final int BUTTON_WIDTH = 20;
-    private static final int BUTTON_HEIGHT = 26;
-    private static final int ICON_INSET_X = 2;
-    private static final int ICON_INSET_Y = 5;
+    /** Width of a tab button. Equal to {@link #BUTTON_HEIGHT} so every tab is a square. */
+    private static final int BUTTON_WIDTH = 32;
+    /** Side length of the icon a button shows above its caption. */
+    private static final int ICON_SIZE = 16;
+    private static final int ICON_INSET_X = (BUTTON_WIDTH - ICON_SIZE) / 2;
+    private static final int ICON_INSET_Y = 2;
+    /** Height of the caption strip along the bottom of every button. */
+    private static final int CAPTION_HEIGHT = 10;
+    /** Gap between a button's icon and its caption. */
+    private static final int CAPTION_GAP = 2;
+    /** Gap between the two copies of a caption while it scrolls past. */
+    private static final int CAPTION_SPACING = 14;
+    /** Milliseconds per pixel of a caption marquee. */
+    private static final long MARQUEE_MS_PER_PIXEL = 40L;
+    private static final int BUTTON_HEIGHT = ICON_INSET_Y + ICON_SIZE + CAPTION_GAP + CAPTION_HEIGHT + ICON_INSET_Y;
     private static final int SCROLLBAR_WIDTH = 3;
     private static final int THUMB_MIN_HEIGHT = 12;
+    /** Full width of the tab strip, so the panel's geometry has a single source for this number. */
+    public static final int TAB_BAR_WIDTH = BUTTON_LEFT_INSET + BUTTON_WIDTH + SCROLLBAR_WIDTH + 1;
 
     private static final int BUTTON_COLOR = 0xFF3A3A3A;
     private static final int BUTTON_HOVER_COLOR = 0xFF4E4E4E;
@@ -38,6 +53,7 @@ public final class TabListPanel {
     private static final int ACCENT_COLOR = 0xFFFFD24A;
     private static final int SCROLL_TRACK_COLOR = 0xFF1A1A1A;
     private static final int SCROLL_THUMB_COLOR = 0xFFB0B0B0;
+    private static final int CAPTION_COLOR = 0xFFE0E0E0;
 
     private final List<CreativeModeTab> tabs = new ArrayList<>();
 
@@ -51,25 +67,36 @@ public final class TabListPanel {
     /**
      * Rebuilds the displayed tab list. Catches mods that register their tab after the first screen open, and drops
      * category tabs that ended up empty because their feature flags are disabled.
+     *
+     * <p>The saved hotbars and the search tab are pinned to the top in that order. Neither is part of the sorted
+     * category list, which is why vanilla shows them in the corner rows instead.</p>
      */
     public void refreshTabs() {
         this.tabs.clear();
+        this.addPinnedTab(CreativeModeTabs.HOTBAR);
+        this.addPinnedTab(CreativeModeTabs.SEARCH);
+
         CreativeModeTabRegistry.getSortedCreativeModeTabs().stream()
                 .filter(CreativeModeTab::shouldDisplay)
+                .filter(tab -> !this.tabs.contains(tab))
                 .forEach(this.tabs::add);
 
-        CreativeModeTab hotbar = BuiltInRegistries.CREATIVE_MODE_TAB.get(CreativeModeTabs.HOTBAR);
-        if (hotbar != null) {
-            this.tabs.add(hotbar);
-        }
-
         this.clampScroll();
+    }
+
+    /** Adds the tab registered under {@code key}, unless the {@link net.minecraft.core.Registry} has no such tab. */
+    private void addPinnedTab(ResourceKey<CreativeModeTab> key) {
+        CreativeModeTab tab = BuiltInRegistries.CREATIVE_MODE_TAB.get(key);
+        if (tab != null && !this.tabs.contains(tab)) {
+            this.tabs.add(tab);
+        }
     }
 
     /** Anchors the strip to the panel. Must be called after {@code leftPos}/{@code topPos} are known. */
     public void updatePosition(int leftPos, int topPos, int panelHeight) {
         this.leftPos = leftPos;
         this.listTop = topPos + 1;
+        // The buttons stop one pixel above the panel's bottom border.
         this.listBottom = topPos + panelHeight - 1;
         this.clampScroll();
     }
@@ -248,9 +275,6 @@ public final class TabListPanel {
 
             guiGraphics.fill(x0, y0, x1, y1, BUTTON_BORDER_COLOR);
             guiGraphics.fill(x0 + 1, y0 + 1, x1 - 1, y1 - 1, color);
-            if (selected) {
-                guiGraphics.fill(x0 + 1, y0 + 1, x0 + 3, y1 - 1, ACCENT_COLOR);
-            }
 
             // A partly scrolled button is clipped, and its icon would spill into its neighbour.
             if (buttonTop >= this.listTop && buttonBottom <= this.listBottom) {
@@ -258,10 +282,49 @@ public final class TabListPanel {
                 guiGraphics.renderItem(icon, x0 + ICON_INSET_X, buttonTop + ICON_INSET_Y);
                 guiGraphics.renderItemDecorations(font, icon, x0 + ICON_INSET_X, buttonTop + ICON_INSET_Y);
             }
+
+            this.renderCaption(guiGraphics, font, tab, x0, x1, buttonTop);
+
+            // Painted last so the scrolling caption cannot run over it.
+            if (selected) {
+                guiGraphics.fill(x0 + 1, y0 + 1, x0 + 3, y1 - 1, ACCENT_COLOR);
+            }
         }
 
         this.renderScrollbar(guiGraphics);
         return hovered;
+    }
+
+    /**
+     * Names {@code tab} in the strip along the bottom of its own button, so every tab says what it holds instead of
+     * only the selected one. The strip is far too narrow for a whole tab name, so a caption that does not fit scrolls
+     * past and repeats rather than being cut off.
+     */
+    private void renderCaption(GuiGraphics guiGraphics, Font font, CreativeModeTab tab, int x0, int x1, int buttonTop) {
+        int clipLeft = x0 + 1;
+        int clipRight = x1 - 1;
+        int top = buttonTop + ICON_INSET_Y + ICON_SIZE + CAPTION_GAP;
+        int clipTop = Math.max(top, this.listTop);
+        int clipBottom = Math.min(top + CAPTION_HEIGHT, this.listBottom);
+        if (clipTop >= clipBottom) {
+            return;
+        }
+
+        String text = tab.getDisplayName().getString();
+        int room = clipRight - clipLeft;
+        int textY = top + (CAPTION_HEIGHT - font.lineHeight) / 2;
+        int textWidth = font.width(text);
+        if (textWidth <= room) {
+            guiGraphics.drawString(font, text, clipLeft + (room - textWidth) / 2, textY, CAPTION_COLOR, false);
+            return;
+        }
+
+        int span = textWidth + CAPTION_SPACING;
+        int offset = (int) ((Util.getMillis() / MARQUEE_MS_PER_PIXEL) % (long) span);
+        guiGraphics.enableScissor(clipLeft, clipTop, clipRight, clipBottom);
+        guiGraphics.drawString(font, text, clipLeft - offset, textY, CAPTION_COLOR, false);
+        guiGraphics.drawString(font, text, clipLeft - offset + span, textY, CAPTION_COLOR, false);
+        guiGraphics.disableScissor();
     }
 
     private void renderScrollbar(GuiGraphics guiGraphics) {

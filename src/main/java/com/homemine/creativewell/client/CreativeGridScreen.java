@@ -13,13 +13,17 @@ import java.util.Map;
 import javax.annotation.Nullable;
 import net.minecraft.client.HotbarManager;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Renderable;
+import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.gui.screens.inventory.CreativeInventoryListener;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.player.inventory.Hotbar;
+import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.Slot;
@@ -53,6 +57,9 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
     private static final int SCROLL_THUMB_COLOR = 0xFF9A9A9A;
     private static final int SCROLL_THUMB_MIN_HEIGHT = 15;
     private static final int ARROW_COLOR = 0xFFBFBFBF;
+    /** The cross of the destroy slot, lifted pixel by pixel out of vanilla's {@code tab_inventory.png}. */
+    private static final ResourceLocation DESTROY_ICON =
+            ResourceLocation.fromNamespaceAndPath(CreativeWellMod.MOD_ID, "textures/gui/destroy_x.png");
 
     /** Selected tab. Static so the choice survives closing and reopening the screen, matching vanilla. */
     private static CreativeModeTab selectedTab = CreativeModeTabs.getDefaultTab();
@@ -85,6 +92,21 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
     @Nullable
     private CreativeInventoryListener listener;
     private boolean hasClickedOutside;
+    /** Foreign class names already reported, so the per-frame purge logs each of them exactly once. */
+    private final java.util.Set<String> reportedForeignWidgets = new java.util.HashSet<>();
+    /**
+     * The widgets {@link #init()} built for this screen itself, compared by identity. Anything else found in
+     * {@link #children()} was hung there by another mod and is dropped, whichever mod that is.
+     */
+    private final java.util.Set<GuiEventListener> ownWidgets =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    /**
+     * The renderables {@link #init()} built for this screen itself, compared by identity. A mod that keeps drawing
+     * its own button hangs it on the screen with {@code addRenderableOnly} rather than {@code addRenderableWidget},
+     * which puts it in {@link #renderables} alone and so leaves it invisible to {@link #children()}.
+     */
+    private final java.util.Set<Renderable> ownRenderables =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
     public CreativeGridScreen(LocalPlayer player) {
         super(new CreativeItemPickerMenu(player), player.getInventory(), Component.translatable("creativewell.screen.title"));
@@ -130,7 +152,8 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
 
         this.tabList.updatePosition(this.leftPos, this.topPos, this.imageHeight);
         this.relicButton.position(this.layout, this.leftPos, this.topPos);
-        this.settingsPanel.position(this.layout, this.leftPos, this.topPos);
+        this.settingsPanel.position(this.layout, this.leftPos, this.topPos,
+                this.width, this.height, reserves.left(), reserves.right());
         this.tabList.refreshTabs();
         if (this.tabList.indexOf(selectedTab) < 0) {
             selectedTab = this.fallbackTab();
@@ -142,6 +165,13 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
         this.minecraft.player.inventoryMenu.removeSlotListener(this.listener);
         this.listener = new CreativeInventoryListener(this.minecraft);
         this.minecraft.player.inventoryMenu.addSlotListener(this.listener);
+
+        // Snapshot taken here on purpose: everything above is ours, everything hung on the screen from now on (the
+        // ScreenEvent.Init.Post handlers of other mods) is not, and purgeForeignWidgets() drops exactly that set.
+        this.ownWidgets.clear();
+        this.ownWidgets.addAll(this.children());
+        this.ownRenderables.clear();
+        this.ownRenderables.addAll(this.renderables);
     }
 
     @Override
@@ -490,6 +520,12 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
             return;
         }
 
+        // The destroy slot reports mayPickup false, so it has to be claimed before that guard turns it away.
+        if (slot == this.menu.destroySlot()) {
+            this.handleDestroySlotClick(mouseButton, type);
+            return;
+        }
+
         if (slot != null && !slot.mayPickup(this.minecraft.player)) {
             return;
         }
@@ -535,6 +571,31 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
                 }
 
                 this.minecraft.player.inventoryMenu.broadcastChanges();
+            }
+        }
+    }
+
+    /**
+     * The destroy slot holds nothing, so the menu cannot act on it and the screen has to. Every branch mirrors
+     * vanilla's own handling for the tab types where this slot exists: a shift click empties the whole inventory, a
+     * left click drops the carried stack off the cursor, and a right click takes a single item off it.
+     */
+    private void handleDestroySlotClick(int mouseButton, ClickType type) {
+        if (type == ClickType.QUICK_MOVE) {
+            for (int index = 0; index < this.minecraft.player.inventoryMenu.getItems().size(); index++) {
+                this.minecraft.gameMode.handleCreativeModeItemAdd(ItemStack.EMPTY, index);
+            }
+
+            // The 3x3 grid stands in for vanilla's 2x2, which the loop above does clear; this one is client-only and
+            // its container never notifies the menu, so the preview needs an explicit nudge.
+            this.menu.craftingArea().input().clearContent();
+            this.menu.craftingArea().refresh(this.minecraft.level);
+            this.minecraft.player.inventoryMenu.broadcastChanges();
+        } else if (type == ClickType.PICKUP) {
+            if (mouseButton == 0) {
+                this.menu.setCarried(ItemStack.EMPTY);
+            } else if (!this.menu.getCarried().isEmpty()) {
+                this.menu.getCarried().shrink(1);
             }
         }
     }
@@ -722,11 +783,31 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
         this.renderSlotFrames(guiGraphics, this.layout.offhandX(), this.layout.offhandY(), 1, 1);
         this.renderSlotFrames(guiGraphics, this.layout.hotbarX(), this.layout.hotbarY(), 9, 1);
 
+        // The destroy slot wears the panel's own slot frame so it blends in, with vanilla's cross blitted inside it.
+        int destroyX = this.leftPos + this.layout.destroyX();
+        int destroyY = this.topPos + this.layout.destroyY();
+        this.renderSlotFrames(guiGraphics, this.layout.destroyX(), this.layout.destroyY(), 1, 1);
+        guiGraphics.blit(DESTROY_ICON, destroyX + 1, destroyY + 1, 0, 0.0F, 0.0F, 16, 16, 16, 16);
+
         // Player area separator.
         int playerTop = y0 + this.layout.inventoryY() - CreativeGridLayout.PADDING;
         guiGraphics.fill(x0 + CreativeGridLayout.TAB_BAR_WIDTH + 1, playerTop, x1 - 1, playerTop + 1, SEPARATOR_COLOR);
 
+        this.renderPlayerModel(guiGraphics, mouseX, mouseY);
         this.renderScrollbar(guiGraphics);
+    }
+
+    /** The player model in the player area, turning with the mouse exactly like the vanilla inventory does. */
+    private void renderPlayerModel(GuiGraphics guiGraphics, int mouseX, int mouseY) {
+        if (this.minecraft.player == null) {
+            return;
+        }
+
+        int x = this.leftPos + this.layout.avatarX();
+        int y = this.topPos + this.layout.avatarY();
+        InventoryScreen.renderEntityInInventoryFollowsMouse(
+                guiGraphics, x, y, x + CreativeGridLayout.AVATAR_WIDTH, y + CreativeGridLayout.AVATAR_HEIGHT,
+                30, 0.0625F, mouseX, mouseY, this.minecraft.player);
     }
 
     private void renderSlotFrames(GuiGraphics guiGraphics, int originX, int originY, int columns, int rows) {
@@ -772,14 +853,88 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        this.purgeForeignWidgets();
         super.render(guiGraphics, mouseX, mouseY, partialTick);
 
+        // Vanilla asks for the hovered slot's tooltip from its own render() override, which this screen does not
+        // inherit; without this call the item information never appears. The call guards itself: no tooltip while
+        // something is carried, and none unless a slot with a stack is hovered.
+        this.renderTooltip(guiGraphics, mouseX, mouseY);
+
         // Drawn last so the panel covers the slots, the carried stack and the item tooltip underneath it.
+        //
+        // Being last is not enough on its own: vanilla draws every item stack at z=150 (GuiGraphics.renderItem)
+        // and its count badge at z=200, while RenderType.gui() tests depth with LEQUAL and writes depth. Geometry
+        // submitted later at z=0 therefore fails the depth test wherever an item already wrote a nearer depth and
+        // silently disappears, which is exactly how the panel used to end up underneath the grid. Lifting the panel
+        // to the tooltip layer (z=400, what GuiGraphics uses for its own tooltips) puts it above the slots.
+        guiGraphics.pose().pushPose();
+        guiGraphics.pose().translate(0.0F, 0.0F, 400.0F);
         this.settingsPanel.render(guiGraphics, this.font, mouseX, mouseY);
+        guiGraphics.pose().popPose();
 
         if (this.hoveredTab != null && !this.settingsPanel.isOpen()) {
             guiGraphics.renderTooltip(this.font, this.hoveredTab.getDisplayName(), mouseX, mouseY);
         }
+
+        // Vanilla's own label for the destroy slot; the translation key is shared, so no lang entry is needed here.
+        if (this.hoveredSlot == this.menu.destroySlot() && !this.settingsPanel.isOpen()) {
+            guiGraphics.renderTooltip(this.font, Component.translatable("inventory.binSlot"), mouseX, mouseY);
+        }
+    }
+
+    /**
+     * Drops whatever another mod hung on this screen, Quark's inventory sort button and FTB's sidebar above all: they
+     * are laid out for the vanilla inventory and would sit on top of this panel. Some of them are put back after
+     * {@code ScreenEvent.Init.Post}, so this runs on every frame rather than once; the screen's own widgets are known
+     * by identity from the {@link #ownWidgets} snapshot {@link #init()} took, which is why nothing here matches on a
+     * mod id or a widget class name.
+     */
+    private void purgeForeignWidgets() {
+        for (GuiEventListener listener : List.copyOf(this.children())) {
+            if (this.ownWidgets.contains(listener)) {
+                continue;
+            }
+
+            if (this.reportedForeignWidgets.add(listener.getClass().getName())) {
+                CreativeWellMod.LOGGER.info("[creativewell] dropping foreign widget {}", listener.getClass().getName());
+            }
+            this.removeWidget(listener);
+        }
+
+        // The second pass is for the ones that never made it into children(): a mod that draws its own button asks
+        // the screen for a render-only entry instead, and those are drawn by the super call later in this method.
+        for (Renderable renderable : List.copyOf(this.renderables)) {
+            if (this.ownRenderables.contains(renderable) || isJeiOverlay(renderable)) {
+                continue;
+            }
+
+            if (this.reportedForeignWidgets.add(renderable.getClass().getName())) {
+                CreativeWellMod.LOGGER.info("[creativewell] dropping foreign renderable {}", renderable.getClass().getName());
+            }
+            this.renderables.remove(renderable);
+        }
+    }
+
+    /**
+     * JEI hands its ingredient list to the screen the same render-only way, and that list is squeezed next to the
+     * panel rather than hidden, so it is the one thing this purge leaves alone.
+     */
+    private static boolean isJeiOverlay(Renderable renderable) {
+        return renderable.getClass().getName().startsWith("mezz.jei.");
+    }
+
+    /**
+     * The panel rectangle in absolute screen coordinates, handed to JEI as an exclusion area so its ingredient list
+     * moves and shrinks instead of being covered by the panel. {@link com.homemine.creativewell.config.CreativeGridConfig.MaxColumnsMode#IGNORE_JEI}
+     * asks for the opposite, so nothing is reported then.
+     */
+    public List<Rect2i> jeiExclusionAreas() {
+        if (CreativeGridConfig.ignoresJei()) {
+            return List.of();
+        }
+
+        return List.of(new Rect2i(this.leftPos, this.topPos, this.imageWidth, this.imageHeight));
     }
 
     /** The search bar (later stage) owns the top strip, so the vanilla title is not drawn in the panel. */

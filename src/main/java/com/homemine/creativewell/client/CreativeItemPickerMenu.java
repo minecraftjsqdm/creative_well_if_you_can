@@ -54,6 +54,9 @@ public class CreativeItemPickerMenu extends AbstractContainerMenu {
     /** The client-only 3x3 crafting block; its containers outlive a slot rebuild. */
     private final CraftingArea craftingArea;
 
+    /** The destroy slot, rebuilt by every {@link #applyLayout} but always last in {@link #slots}. */
+    private Slot destroySlot;
+
     /** Backing container of the visible grid page; its size equals {@code columns * rows}. */
     private SimpleContainer container = new SimpleContainer(CreativeGridLayout.MIN_COLUMNS * 5);
     private int columns = CreativeGridLayout.MIN_COLUMNS;
@@ -74,6 +77,12 @@ public class CreativeItemPickerMenu extends AbstractContainerMenu {
 
     public CraftingArea craftingArea() {
         return this.craftingArea;
+    }
+
+    /** Vanilla's "destroy item" slot; the screen draws the cross and handles the clicks itself. */
+    @Nullable
+    public Slot destroySlot() {
+        return this.destroySlot;
     }
 
     public int columns() {
@@ -124,6 +133,10 @@ public class CreativeItemPickerMenu extends AbstractContainerMenu {
                     craftingY + index / CraftingArea.SIZE * CreativeGridLayout.CELL));
         }
         this.addSlot(new ResultSlot(this.craftingArea.resultContainer(), 0, layout.resultX(), layout.resultY()));
+
+        // Appended last, after every player slot, so the 0..45 player indices above are unaffected.
+        this.destroySlot = new DestroySlot(layout.destroyX(), layout.destroyY());
+        this.addSlot(this.destroySlot);
 
         this.scrollTo(this.scrollOffs);
     }
@@ -291,6 +304,27 @@ public class CreativeItemPickerMenu extends AbstractContainerMenu {
 
         @Override
         public boolean mayPlace(ItemStack stack) {
+            return false;
+        }
+    }
+
+    /**
+     * Vanilla's "destroy item" slot. It holds nothing: {@link #mayPlace} is false so no drag or drop can ever put a
+     * stack on it, and {@link #mayPickup} is false so the menu's own transfer paths skip it. The screen intercepts
+     * clicks on it before the {@code mayPickup} guard is reached.
+     */
+    private static class DestroySlot extends Slot {
+        DestroySlot(int x, int y) {
+            super(new SimpleContainer(1), 0, x, y);
+        }
+
+        @Override
+        public boolean mayPlace(ItemStack stack) {
+            return false;
+        }
+
+        @Override
+        public boolean mayPickup(Player player) {
             return false;
         }
     }

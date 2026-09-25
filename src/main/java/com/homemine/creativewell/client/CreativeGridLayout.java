@@ -14,7 +14,7 @@ public final class CreativeGridLayout {
     /** Side length of a single slot cell. */
     public static final int CELL = 18;
     /** Width of the vertical tab strip along the left edge of the panel. */
-    public static final int TAB_BAR_WIDTH = 26;
+    public static final int TAB_BAR_WIDTH = TabListPanel.TAB_BAR_WIDTH;
     /** Width of the scroll track along the right edge of the grid. */
     public static final int SCROLLBAR_WIDTH = 12;
     /** Height reserved at the top of the panel for the search bar. */
@@ -39,6 +39,17 @@ public final class CreativeGridLayout {
     public static final int GEAR_SIZE = 14;
     /** Gap between the search field and the gear button. */
     public static final int GEAR_GAP = 2;
+    /** Width of the player model box in the player area. */
+    public static final int AVATAR_WIDTH = 46;
+    /** Height of the player model box in the player area. */
+    public static final int AVATAR_HEIGHT = 62;
+    /** Gap between the player model box and the crafting grid. */
+    public static final int AVATAR_GAP = 4;
+    /** Width of the crafting + backpack + armor blocks, without the player model box. */
+    public static final int PLAYER_BLOCK_WIDTH = CRAFT_GRID_SIZE * CELL + CRAFT_RESULT_GAP + CELL
+            + CRAFT_PLAYER_GAP + 9 * CELL + PLAYER_ARMOR_GAP + 2 * CELL;
+    /** Width the player area needs no matter how few columns the grid has. */
+    public static final int PLAYER_BAND_WIDTH = AVATAR_WIDTH + AVATAR_GAP + PLAYER_BLOCK_WIDTH;
 
     private final int panelX;
     private final int panelY;
@@ -62,12 +73,16 @@ public final class CreativeGridLayout {
     private final int armorY;
     private final int offhandX;
     private final int offhandY;
+    private final int destroyX;
+    private final int destroyY;
     private final int craftingX;
     private final int craftingY;
     private final int resultX;
     private final int resultY;
     private final int gearX;
     private final int gearY;
+    private final int avatarX;
+    private final int avatarY;
 
     private CreativeGridLayout(
             int panelX, int panelY, int panelWidth, int panelHeight, int columns, int rows,
@@ -75,8 +90,9 @@ public final class CreativeGridLayout {
             int scrollbarX, int scrollbarY, int scrollbarHeight,
             int inventoryX, int inventoryY, int hotbarX, int hotbarY,
             int armorX, int armorY, int offhandX, int offhandY,
+            int destroyX, int destroyY,
             int craftingX, int craftingY, int resultX, int resultY,
-            int gearX, int gearY) {
+            int gearX, int gearY, int avatarX, int avatarY) {
         this.panelX = panelX;
         this.panelY = panelY;
         this.panelWidth = panelWidth;
@@ -99,41 +115,57 @@ public final class CreativeGridLayout {
         this.armorY = armorY;
         this.offhandX = offhandX;
         this.offhandY = offhandY;
+        this.destroyX = destroyX;
+        this.destroyY = destroyY;
         this.craftingX = craftingX;
         this.craftingY = craftingY;
         this.resultX = resultX;
         this.resultY = resultY;
         this.gearX = gearX;
         this.gearY = gearY;
+        this.avatarX = avatarX;
+        this.avatarY = avatarY;
     }
 
     /**
      * Fits the panel into the room that is left between the two strips JEI reserves, {@code jeiLeft} and
-     * {@code jeiRight}. The reserved widths are subtracted before the grid is measured, so JEI keeps its room and
-     * the grid is what gets squeezed when the window is small.
+     * {@code jeiRight}.
+     *
+     * <p>The player area needs {@link #PLAYER_BAND_WIDTH} pixels whatever the column count is, so the panel is
+     * never narrower than that band: with a small window the panel keeps the player area intact and JEI is the
+     * one that gets squeezed (the screen hands JEI the panel rectangle as an exclusion area). The band is also
+     * anchored to the middle of the screen, so the player area stays centred for every column count.</p>
      */
     public static CreativeGridLayout compute(
             int screenWidth, int screenHeight, int maxColumns, int jeiLeft, int jeiRight) {
-        int availableWidth = Math.max(0, screenWidth - MARGIN * 2 - jeiLeft - jeiRight);
         int availableHeight = Math.max(0, screenHeight - MARGIN * 2);
-
-        int gridAreaWidth = availableWidth - TAB_BAR_WIDTH - PADDING * 2 - SCROLLBAR_WIDTH;
-        int columns = Mth.clamp(gridAreaWidth / CELL, MIN_COLUMNS, Math.max(MIN_COLUMNS, maxColumns));
-
-        int gridAreaHeight = availableHeight - SEARCH_BAR_HEIGHT - PLAYER_AREA_HEIGHT - PADDING * 2;
-        int rows = Math.max(1, gridAreaHeight / CELL);
 
         int gridX = TAB_BAR_WIDTH + PADDING;
         int gridY = SEARCH_BAR_HEIGHT + PADDING;
-        int panelWidth = gridX + columns * CELL + PADDING + SCROLLBAR_WIDTH;
+
+        // The player band starts at gridX, so its centre sits at gridX + PLAYER_BAND_WIDTH / 2. Moving the panel
+        // so that centre lands on the middle of the screen centres the player area for every column count.
+        int bandCentre = gridX + PLAYER_BAND_WIDTH / 2;
+        int panelX = Math.max(MARGIN + jeiLeft, screenWidth / 2 - bandCentre);
+
+        int roomRight = screenWidth - MARGIN - jeiRight;
+        int roomForGrid = roomRight - panelX - gridX - PADDING - SCROLLBAR_WIDTH;
+        int wanted = Math.max(roomForGrid, PLAYER_BAND_WIDTH);
+        int columns = Mth.clamp(wanted / CELL, MIN_COLUMNS, Math.max(MIN_COLUMNS, maxColumns));
+
+        // The content block spans the grid plus its scroll track, but never less than the player band.
+        int contentWidth = Math.max(columns * CELL + PADDING + SCROLLBAR_WIDTH, PLAYER_BAND_WIDTH);
+        int panelWidth = gridX + contentWidth + PADDING;
+
+        int gridAreaHeight = availableHeight - SEARCH_BAR_HEIGHT - PLAYER_AREA_HEIGHT - PADDING * 2;
+        int rows = Math.max(1, gridAreaHeight / CELL);
         int panelHeight = gridY + rows * CELL + PADDING + PLAYER_AREA_HEIGHT;
-        int panelX = MARGIN + jeiLeft + Math.max(0, (availableWidth - panelWidth) / 2);
         int panelY = MARGIN + Math.max(0, (availableHeight - panelHeight) / 2);
 
-        // The player area is one row band: 3x3 crafting grid -> arrow -> result, then the backpack, then the
-        // armor block with the offhand slot underneath it.
+        // The player area is one row band: the player model, 3x3 crafting grid -> arrow -> result, then the
+        // backpack, then the armor block with the offhand slot underneath it.
         int inventoryY = gridY + rows * CELL + PADDING + 6;
-        int craftingX = gridX;
+        int craftingX = gridX + AVATAR_WIDTH + AVATAR_GAP;
         int craftingY = inventoryY;
         int resultX = craftingX + CRAFT_GRID_SIZE * CELL + CRAFT_RESULT_GAP;
         int resultY = craftingY;
@@ -146,9 +178,17 @@ public final class CreativeGridLayout {
         int offhandX = armorX;
         int offhandY = armorY + 2 * CELL + 4;
 
-        // The gear shares the search strip with the field and sits against the grid's right edge.
-        int searchWidth = columns * CELL - GEAR_SIZE - GEAR_GAP;
-        int gearX = gridX + columns * CELL - GEAR_SIZE;
+        // Vanilla puts its destroy slot beside the inventory; here it goes straight under the offhand slot,
+        // which is the only free cell in the armor column.
+        int destroyX = armorX;
+        int destroyY = offhandY + CELL + PADDING;
+
+        int avatarX = gridX;
+        int avatarY = inventoryY;
+
+        // The gear shares the search strip with the field and sits against the content block's right edge.
+        int searchWidth = contentWidth - GEAR_SIZE - GEAR_GAP;
+        int gearX = gridX + contentWidth - GEAR_SIZE;
         int gearY = PADDING - 1;
 
         return new CreativeGridLayout(
@@ -157,8 +197,9 @@ public final class CreativeGridLayout {
                 gridX + columns * CELL + PADDING, gridY, rows * CELL,
                 inventoryX, inventoryY, hotbarX, hotbarY,
                 armorX, armorY, offhandX, offhandY,
+                destroyX, destroyY,
                 craftingX, craftingY, resultX, resultY,
-                gearX, gearY);
+                gearX, gearY, avatarX, avatarY);
     }
 
     /** Left edge of the panel, in screen pixels; {@code AbstractContainerScreen} uses it as {@code leftPos}. */
@@ -266,6 +307,14 @@ public final class CreativeGridLayout {
         return this.offhandY;
     }
 
+    public int destroyX() {
+        return this.destroyX;
+    }
+
+    public int destroyY() {
+        return this.destroyY;
+    }
+
     public int craftingX() {
         return this.craftingX;
     }
@@ -280,5 +329,15 @@ public final class CreativeGridLayout {
 
     public int resultY() {
         return this.resultY;
+    }
+
+    /** Left edge of the player model box, panel-relative. */
+    public int avatarX() {
+        return this.avatarX;
+    }
+
+    /** Top edge of the player model box, panel-relative. */
+    public int avatarY() {
+        return this.avatarY;
     }
 }

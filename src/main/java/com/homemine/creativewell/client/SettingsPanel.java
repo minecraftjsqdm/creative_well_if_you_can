@@ -18,12 +18,15 @@ import net.minecraft.util.Mth;
  * {@link CreativeGridConfig} and then tells the screen that something changed, which is what makes the new setting
  * visible the next tick.</p>
  *
- * <p>Dragging the slider only moves {@link #pendingColumns}: the panel is positioned from the layout, and the layout
- * follows the column count, so applying the value mid-drag would drag the slider out from under the cursor.</p>
+ * <p>The column slider is the one option that is not a plain either/or: its track runs over every column count and
+ * ends in the two uncapped modes, so a single drag reaches both "unlimited" and "cram JEI too" instead of them
+ * needing buttons of their own. Dragging only moves {@link #pendingStop}: the panel is positioned from the layout,
+ * and the layout follows the column count, so applying the value mid-drag would drag the slider out from under the
+ * cursor.</p>
  */
 public final class SettingsPanel {
     private static final int PANEL_WIDTH = 240;
-    private static final int PANEL_HEIGHT = 152;
+    private static final int PANEL_HEIGHT = 134;
     private static final int INSET = 6;
     private static final int CONTENT_WIDTH = PANEL_WIDTH - INSET * 2;
     private static final int BUTTON_HEIGHT = 14;
@@ -35,13 +38,18 @@ public final class SettingsPanel {
     private static final int SLIDER_Y = 31;
     private static final int SLIDER_HEIGHT = 10;
     private static final int SLIDER_THUMB_WIDTH = 10;
-    private static final int MODE_ROW_Y = 45;
-    private static final int SHIFT_LABEL_Y = 63;
-    private static final int SHIFT_ROW_Y = 74;
-    private static final int SEARCH_LABEL_Y = 92;
-    private static final int SEARCH_ROW_Y = 103;
-    private static final int JEI_LABEL_Y = 121;
-    private static final int JEI_ROW_Y = 132;
+    private static final int SHIFT_LABEL_Y = 45;
+    private static final int SHIFT_ROW_Y = 56;
+    private static final int SEARCH_LABEL_Y = 74;
+    private static final int SEARCH_ROW_Y = 85;
+    private static final int JEI_LABEL_Y = 103;
+    private static final int JEI_ROW_Y = 114;
+
+    /** One slider stop per column count, then the two uncapped modes. */
+    private static final int BOUNDED_STOPS = CreativeGridConfig.MAX_COLUMNS - CreativeGridConfig.MIN_COLUMNS + 1;
+    private static final int UNLIMITED_STOP = BOUNDED_STOPS;
+    private static final int IGNORE_JEI_STOP = BOUNDED_STOPS + 1;
+    private static final int TOTAL_STOPS = BOUNDED_STOPS + 2;
 
     private static final int PANEL_COLOR = 0xF0101010;
     private static final int BORDER_COLOR = 0xFF909090;
@@ -52,8 +60,8 @@ public final class SettingsPanel {
     private static final int BUTTON_HOVER_COLOR = 0xFF4E4E4E;
     private static final int BUTTON_BORDER_COLOR = 0xFF232323;
     private static final int BUTTON_TEXT_COLOR = 0xFFD0D0D0;
-    private static final int ACTIVE_COLOR = 0xFF6E6E6E;
     private static final int TRACK_COLOR = 0xFF151515;
+    private static final int TICK_COLOR = 0xFF3C3C3C;
     private static final int THUMB_COLOR = 0xFF9A9A9A;
     private static final int ACCENT_COLOR = 0xFFFFD24A;
     private static final int GEAR_COLOR = 0xFFBFBFBF;
@@ -82,18 +90,30 @@ public final class SettingsPanel {
     private int panelY;
     private boolean open;
     private boolean draggingSlider;
-    private int pendingColumns;
+    private int pendingStop;
 
     public SettingsPanel(Runnable onChanged) {
         this.onChanged = onChanged;
     }
 
-    /** Anchors the gear to the search strip and hangs the panel underneath it, right edges aligned. */
-    public void position(CreativeGridLayout layout, int leftPos, int topPos) {
+    /**
+     * Anchors the gear to the search strip and hangs the panel underneath it, right edges aligned.
+     *
+     * <p>The panel is then pulled back inside the free space between the screen edges and the JEI strips, so it can
+     * never sit on top of the item list of JEI or of the vanilla creative screen.</p>
+     */
+    public void position(CreativeGridLayout layout, int leftPos, int topPos,
+            int screenWidth, int screenHeight, int jeiLeft, int jeiRight) {
         this.gearX = leftPos + layout.gearX();
         this.gearY = topPos + layout.gearY();
-        this.panelX = Math.max(0, this.gearX + CreativeGridLayout.GEAR_SIZE - PANEL_WIDTH);
-        this.panelY = Math.max(0, this.gearY + CreativeGridLayout.GEAR_SIZE + 2);
+
+        int minX = CreativeGridLayout.MARGIN + jeiLeft;
+        int maxX = Math.max(minX, screenWidth - CreativeGridLayout.MARGIN - jeiRight - PANEL_WIDTH);
+        this.panelX = Mth.clamp(this.gearX + CreativeGridLayout.GEAR_SIZE - PANEL_WIDTH, minX, maxX);
+
+        int minY = CreativeGridLayout.MARGIN;
+        int maxY = Math.max(minY, screenHeight - CreativeGridLayout.MARGIN - PANEL_HEIGHT);
+        this.panelY = Mth.clamp(this.gearY + CreativeGridLayout.GEAR_SIZE + 2, minY, maxY);
     }
 
     public boolean isOpen() {
@@ -147,15 +167,11 @@ public final class SettingsPanel {
 
         if (this.isOverSlider(mouseX, mouseY)) {
             this.draggingSlider = true;
-            this.pendingColumns = columnsAt(mouseX);
+            this.pendingStop = stopAt(mouseX);
             return true;
         }
 
-        if (this.isOverRow(mouseX, mouseY, MODE_ROW_Y, 0, PAIR_WIDTH)) {
-            applyMode(MaxColumnsMode.UNLIMITED);
-        } else if (this.isOverRow(mouseX, mouseY, MODE_ROW_Y, 1, PAIR_WIDTH)) {
-            applyMode(MaxColumnsMode.IGNORE_JEI);
-        } else if (this.isOverRow(mouseX, mouseY, SHIFT_ROW_Y, 0, PAIR_WIDTH)) {
+        if (this.isOverRow(mouseX, mouseY, SHIFT_ROW_Y, 0, PAIR_WIDTH)) {
             applyShift(ShiftClickAction.GRAB_FULL_STACK);
         } else if (this.isOverRow(mouseX, mouseY, SHIFT_ROW_Y, 1, PAIR_WIDTH)) {
             applyShift(ShiftClickAction.STOCK_INVENTORY);
@@ -179,7 +195,7 @@ public final class SettingsPanel {
             return false;
         }
 
-        this.pendingColumns = columnsAt(mouseX);
+        this.pendingStop = stopAt(mouseX);
         return true;
     }
 
@@ -190,9 +206,20 @@ public final class SettingsPanel {
         }
 
         this.draggingSlider = false;
-        CreativeGridConfig.setMaxColumns(this.pendingColumns);
-        applyMode(MaxColumnsMode.BOUNDED);
+        applyStop(this.pendingStop);
         return true;
+    }
+
+    /** Turns a slider stop into a setting: a column count, or one of the two uncapped modes at the far end. */
+    private void applyStop(int stop) {
+        if (stop >= IGNORE_JEI_STOP) {
+            applyMode(MaxColumnsMode.IGNORE_JEI);
+        } else if (stop >= UNLIMITED_STOP) {
+            applyMode(MaxColumnsMode.UNLIMITED);
+        } else {
+            CreativeGridConfig.setMaxColumns(CreativeGridConfig.MIN_COLUMNS + stop);
+            applyMode(MaxColumnsMode.BOUNDED);
+        }
     }
 
     private void applyMode(MaxColumnsMode mode) {
@@ -238,13 +265,12 @@ public final class SettingsPanel {
                 && mouseY >= this.panelY + SLIDER_Y && mouseY < this.panelY + SLIDER_Y + SLIDER_HEIGHT;
     }
 
-    /** The column count the cursor points at, clamped to the slider range. */
-    private int columnsAt(double mouseX) {
+    /** The slider stop the cursor points at, clamped to the track. */
+    private int stopAt(double mouseX) {
         int trackX = this.panelX + INSET;
         int travel = CONTENT_WIDTH - SLIDER_THUMB_WIDTH;
         double fraction = (mouseX - trackX - SLIDER_THUMB_WIDTH / 2.0) / travel;
-        return CreativeGridConfig.MIN_COLUMNS
-                + (int) Math.round(Mth.clamp(fraction, 0.0, 1.0) * (CreativeGridConfig.MAX_COLUMNS - CreativeGridConfig.MIN_COLUMNS));
+        return (int) Math.round(Mth.clamp(fraction, 0.0, 1.0) * (TOTAL_STOPS - 1));
     }
 
     // ------------------------------------------------------------------
@@ -274,12 +300,6 @@ public final class SettingsPanel {
         guiGraphics.drawString(font, columnsLabel(), x0 + INSET, y0 + COLUMNS_LABEL_Y, TEXT_COLOR, false);
         this.renderSlider(guiGraphics, mouseX, mouseY);
 
-        MaxColumnsMode mode = CreativeGridConfig.maxColumnsMode();
-        this.renderButton(guiGraphics, font, INSET, MODE_ROW_Y, PAIR_WIDTH,
-                mode == MaxColumnsMode.UNLIMITED, mouseX, mouseY, COLUMNS_UNLIMITED);
-        this.renderButton(guiGraphics, font, INSET + PAIR_WIDTH + 4, MODE_ROW_Y, PAIR_WIDTH,
-                mode == MaxColumnsMode.IGNORE_JEI, mouseX, mouseY, COLUMNS_IGNORE_JEI);
-
         guiGraphics.drawString(font, SHIFT_LABEL, x0 + INSET, y0 + SHIFT_LABEL_Y, TEXT_COLOR, false);
         ShiftClickAction shift = CreativeGridConfig.shiftClickAction();
         this.renderButton(guiGraphics, font, INSET, SHIFT_ROW_Y, PAIR_WIDTH,
@@ -301,12 +321,28 @@ public final class SettingsPanel {
         this.renderTriple(guiGraphics, font, JEI_ROW_Y, 2, link == JeiLinkMode.TWO_WAY, mouseX, mouseY, JEI_TWO_WAY);
     }
 
-    /** The column cap the panel is showing: the slider value, or an infinity mark for the two uncapped modes. */
-    private static Component columnsLabel() {
+    /** The setting the slider currently stands for: the live value while dragging, the stored value otherwise. */
+    private Component columnsLabel() {
+        return describeStop(this.draggingSlider ? this.pendingStop : currentStop());
+    }
+
+    private static Component describeStop(int stop) {
+        if (stop >= IGNORE_JEI_STOP) {
+            return COLUMNS_IGNORE_JEI;
+        }
+        if (stop >= UNLIMITED_STOP) {
+            return COLUMNS_UNLIMITED;
+        }
+        return Component.translatable("creativewell.settings.columns.value", CreativeGridConfig.MIN_COLUMNS + stop);
+    }
+
+    /** Where the thumb rests when nothing is being dragged. */
+    private static int currentStop() {
         return switch (CreativeGridConfig.maxColumnsMode()) {
-            case BOUNDED -> Component.translatable("creativewell.settings.columns.value", CreativeGridConfig.maxColumns());
-            case UNLIMITED, IGNORE_JEI -> Component.translatable("creativewell.settings.columns.label")
-                    .append(Component.literal(" \u221e"));
+            case UNLIMITED -> UNLIMITED_STOP;
+            case IGNORE_JEI -> IGNORE_JEI_STOP;
+            case BOUNDED -> Mth.clamp(CreativeGridConfig.maxColumns(),
+                    CreativeGridConfig.MIN_COLUMNS, CreativeGridConfig.MAX_COLUMNS) - CreativeGridConfig.MIN_COLUMNS;
         };
     }
 
@@ -329,16 +365,27 @@ public final class SettingsPanel {
     private void renderSlider(GuiGraphics guiGraphics, int mouseX, int mouseY) {
         int trackX = this.panelX + INSET;
         int trackY = this.panelY + SLIDER_Y;
-        guiGraphics.fill(trackX, trackY, trackX + CONTENT_WIDTH, trackY + SLIDER_HEIGHT, TRACK_COLOR);
+        int trackRight = trackX + CONTENT_WIDTH;
+        guiGraphics.fill(trackX, trackY, trackRight, trackY + SLIDER_HEIGHT, TRACK_COLOR);
 
-        int value = this.draggingSlider ? this.pendingColumns : CreativeGridConfig.maxColumns();
-        int travel = CONTENT_WIDTH - SLIDER_THUMB_WIDTH;
-        double fraction = (double) (value - CreativeGridConfig.MIN_COLUMNS)
-                / (CreativeGridConfig.MAX_COLUMNS - CreativeGridConfig.MIN_COLUMNS);
-        int thumbX = trackX + (int) Math.round(fraction * travel);
+        // A tick per stop makes it visible that the last two are the uncapped modes and not just more column counts.
+        for (int stop = 0; stop < TOTAL_STOPS; stop++) {
+            int tickX = trackX + stopOffset(stop) + SLIDER_THUMB_WIDTH / 2;
+            boolean uncapped = stop >= UNLIMITED_STOP;
+            guiGraphics.fill(tickX, trackY + 2, tickX + 1, trackY + SLIDER_HEIGHT - 2,
+                    uncapped ? ACCENT_COLOR : TICK_COLOR);
+        }
+
+        int thumbX = trackX + stopOffset(this.draggingSlider ? this.pendingStop : currentStop());
         boolean hovered = this.isOverSlider(mouseX, mouseY);
         guiGraphics.fill(thumbX, trackY, thumbX + SLIDER_THUMB_WIDTH, trackY + SLIDER_HEIGHT,
                 hovered || this.draggingSlider ? ACCENT_COLOR : THUMB_COLOR);
+    }
+
+    /** Pixel offset from the start of the track for a slider stop. */
+    private static int stopOffset(int stop) {
+        int travel = CONTENT_WIDTH - SLIDER_THUMB_WIDTH;
+        return (int) Math.round((double) stop / (TOTAL_STOPS - 1) * travel);
     }
 
     private void renderButton(

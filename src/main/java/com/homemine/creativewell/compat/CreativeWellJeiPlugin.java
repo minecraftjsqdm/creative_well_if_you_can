@@ -1,9 +1,13 @@
 package com.homemine.creativewell.compat;
 
 import com.homemine.creativewell.CreativeWellMod;
+import com.homemine.creativewell.client.CreativeGridScreen;
+import java.util.List;
 import javax.annotation.Nullable;
 import mezz.jei.api.IModPlugin;
 import mezz.jei.api.JeiPlugin;
+import mezz.jei.api.gui.handlers.IGuiContainerHandler;
+import mezz.jei.api.registration.IGuiHandlerRegistration;
 import mezz.jei.api.runtime.IJeiRuntime;
 import net.minecraft.resources.ResourceLocation;
 
@@ -23,6 +27,20 @@ public final class CreativeWellJeiPlugin implements IModPlugin {
     @Override
     public ResourceLocation getPluginUid() {
         return ResourceLocation.fromNamespaceAndPath(CreativeWellMod.MOD_ID, CreativeWellMod.MOD_ID);
+    }
+
+    /**
+     * Tells JEI to treat the creative grid panel as occupied space, so when the window is too narrow for both the
+     * ingredient list stops butting against the panel: JEI shrinks its own overlay instead of drawing underneath it.
+     */
+    @Override
+    public void registerGuiHandlers(IGuiHandlerRegistration registration) {
+        registration.addGuiContainerHandler(CreativeGridScreen.class, new IGuiContainerHandler<>() {
+            @Override
+            public List<net.minecraft.client.renderer.Rect2i> getGuiExtraAreas(CreativeGridScreen screen) {
+                return screen.jeiExclusionAreas();
+            }
+        });
     }
 
     @Override

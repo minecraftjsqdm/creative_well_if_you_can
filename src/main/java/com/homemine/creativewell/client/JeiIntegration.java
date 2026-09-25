@@ -47,7 +47,7 @@ public final class JeiIntegration {
 
     /**
      * How much room to leave for JEI on either side of the panel. Zero whenever JEI is missing, its runtime is not
-     * up yet, the ingredient list is hidden, or the user picked the "crowd JEI out" mode.
+     * up yet, or the user picked the "crowd JEI out" mode.
      */
     public static Reserves reserve() {
         if (!isLoaded() || CreativeGridConfig.ignoresJei()) {
@@ -79,10 +79,14 @@ public final class JeiIntegration {
     private static final class Bridge {
         static Reserves reserve() {
             IJeiRuntime runtime = CreativeWellJeiPlugin.runtime();
-            if (runtime == null || !runtime.getIngredientListOverlay().isListDisplayed()) {
+            if (runtime == null) {
                 return Reserves.NONE;
             }
 
+            // Whether JEI is drawing its list right now must not feed into the layout: this panel is what decides
+            // how much room JEI gets, so reading that state back latches the two together. Coming back from "crowd
+            // JEI out" would then never restore JEI, because JEI stays hidden for as long as the panel is wide.
+            //
             // JEI draws its ingredient list against the right edge and its public API exposes no bounds for it, so
             // the width comes from JEI's own config. Nothing is reserved on the left: the exclusion areas JEI
             // reports are the places JEI has to avoid, not places JEI occupies, so they say nothing about its size.
@@ -139,7 +143,7 @@ public final class JeiIntegration {
 
             boolean displayed = runtime.getIngredientListOverlay().isListDisplayed();
             return "jei=loaded runtime=ready listDisplayed=" + displayed
-                    + " listWidth=" + (displayed ? estimateListWidth(runtime) : 0);
+                    + " listWidth=" + estimateListWidth(runtime);
         }
     }
 }
