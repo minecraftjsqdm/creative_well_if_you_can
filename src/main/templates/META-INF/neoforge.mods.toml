@@ -12,6 +12,9 @@ version="${mod_version}" #mandatory
 
 displayName="${mod_name}" #mandatory
 
+# Client-side only mod: no server entrypoint, and servers are not required to install it.
+displayTest="IGNORE_ALL_VERSION" #optional
+
 authors="${mod_authors}" #optional
 
 displayURL="${mod_display_url}" #optional

@@ -57,6 +57,8 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
     private static final int SCROLL_THUMB_COLOR = 0xFF9A9A9A;
     private static final int SCROLL_THUMB_MIN_HEIGHT = 15;
     private static final int ARROW_COLOR = 0xFFBFBFBF;
+    /** A search that takes longer than this is logged, so the next "it froze" report comes with a number. */
+    private static final long SLOW_SEARCH_MILLIS = 150L;
     /** The cross of the destroy slot, lifted pixel by pixel out of vanilla's {@code tab_inventory.png}. */
     private static final ResourceLocation DESTROY_ICON =
             ResourceLocation.fromNamespaceAndPath(CreativeWellMod.MOD_ID, "textures/gui/destroy_x.png");
@@ -80,6 +82,8 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
     private String query = "";
     /** Set when a setting changed; the rebuild is deferred to {@link #containerTick()} so nothing moves mid-render. */
     private boolean settingsDirty;
+    /** Set while the current query is waiting for a search tree that vanilla is still building. */
+    private boolean searchAwaitingTree;
     /** Suppresses the search responder while the field is written to from code, so a restore is not an edit. */
     private boolean updatingSearchText;
     /** Last text seen in JEI's search field, so only real changes are copied across. */
@@ -160,6 +164,9 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
         }
 
         this.tabList.ensureVisible(selectedTab);
+        // Opening the panel is one of the two moments the per-item search caches can be stale without anything
+        // having told us: the player may have run /reload or changed dimension since the last time it was open.
+        SearchBar.invalidateCaches();
         this.applyTab(selectedTab);
 
         this.minecraft.player.inventoryMenu.removeSlotListener(this.listener);
@@ -199,6 +206,13 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
 
         this.refreshInvalidatedTabs();
         this.syncJeiSearch();
+
+        // The query was answered from the local match because vanilla's search tree for this tab was still being
+        // built. Run it again the moment that tree lands, so the grid upgrades to the tooltip-accurate result
+        // without the player having to type another character.
+        if (this.searchAwaitingTree && SearchBar.treeReady(this.minecraft, selectedTab, this.query)) {
+            this.loadItems(false);
+        }
 
         if (this.minecraft.gameMode == null || !this.minecraft.gameMode.hasInfiniteItems()) {
             this.minecraft.setScreen(new InventoryScreen(this.minecraft.player));
@@ -285,14 +299,22 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
         Collection<ItemStack> source = selectedTab.getType() == CreativeModeTab.Type.HOTBAR
                 ? this.buildHotbarPage()
                 : selectedTab.getDisplayItems();
-        Collection<ItemStack> visible = SearchBar.resolve(this.minecraft, selectedTab, source, this.query);
+        long started = System.nanoTime();
+        SearchBar.Result resolved = SearchBar.resolve(this.minecraft, selectedTab, source, this.query);
+        long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
+        this.searchAwaitingTree = resolved.awaitingTree();
+
+        if (elapsedMillis >= SLOW_SEARCH_MILLIS) {
+            CreativeWellMod.LOGGER.warn("[creativewell] search took {} ms over {} stacks (query length {}, tree pending {})",
+                    elapsedMillis, source.size(), this.query.length(), this.searchAwaitingTree);
+        }
 
         if (resetScroll) {
             this.menu.items.clear();
-            this.menu.items.addAll(visible);
+            this.menu.items.addAll(resolved.items());
             this.menu.resetScroll();
         } else {
-            this.refreshTabItems(visible);
+            this.refreshTabItems(resolved.items());
         }
     }
 
@@ -370,6 +392,8 @@ public class CreativeGridScreen extends AbstractContainerScreen<CreativeItemPick
             return;
         }
 
+        // Rebuilding the tabs is also when datapack tag data can have moved on, and the per-item caches cannot tell.
+        SearchBar.invalidateCaches();
         this.tabList.refreshTabs();
         if (this.tabList.indexOf(selectedTab) < 0) {
             this.applyTab(this.fallbackTab());
